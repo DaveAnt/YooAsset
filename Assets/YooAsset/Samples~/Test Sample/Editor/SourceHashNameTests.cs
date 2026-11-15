@@ -45,7 +45,9 @@ namespace YooAsset.Tests.Editor
                 new RawFileBuildParameters(),
                 new ArchiveFileBuildParameters(),
                 new EditorSimulateBuildParameters(),
+#if TUANJIE_1_8_OR_NEWER && YOOASSET_INSTANT_ASSET_SUPPORT
                 new InstantAssetBuildParameters()
+#endif
             };
             foreach (BuildParameters value in parameters)
             {
