@@ -9,8 +9,9 @@ using UnityEngine.UIElements;
 
 namespace YooAsset.Editor
 {
+#if !UNITY_2022_2_OR_NEWER
     /// <summary>
-    /// 资源收集器编辑器窗口
+    /// 资源收集器编辑器窗口（Unity 2019.4–2022.1 兼容界面）
     /// </summary>
     public class BundleCollectorWindow : EditorWindow
     {
@@ -1386,4 +1387,421 @@ namespace YooAsset.Editor
             return _groupActiveRuleList[0];
         }
     }
+#else
+    /// <summary>原生配置树窗口；资源预览只读，所有编辑只更改收集器配置。</summary>
+    public class BundleCollectorWindow : EditorWindow
+    {
+        [SerializeField] private List<string> _selectedKeys = new List<string>();
+        [SerializeField] private List<string> _expandedKeys = new List<string>();
+        private CollectorTreeView _tree;
+        private CollectorTreeCommands _commands;
+        private Button _saveButton;
+        private ToolbarSearchField _search;
+        private ScrollView _details;
+        private VisualElement _globalSettings;
+        private VisualElement _packageSettings;
+        private Label _message;
+        private BundleCollectorPackage _selectedPackage;
+        private BundleCollectorGroup _selectedGroup;
+        private BundleCollector _selectedCollector;
+        private bool _showGlobalSettings;
+        private bool _showPackageSettings;
+        private TextField _renameField;
+
+        internal CollectorTreeView ConfigurationTree
+        {
+            get { return _tree; }
+        }
+        internal CollectorTreeCommands Commands
+        {
+            get { return _commands; }
+        }
+
+        /// <summary>打开资源收集器窗口。</summary>
+        [MenuItem("YooAsset/Bundle Collector", false, 101)]
+        public static void OpenWindow()
+        {
+            OpenWindowInternal();
+        }
+        /// <summary>打开窗口并定位到配置中的收集器，不更改工程资源。</summary>
+        public static void OpenWindow(string packageName, string groupName, string collectPath)
+        {
+            var window = OpenWindowInternal();
+            window._tree.FocusCollector(packageName, groupName, collectPath);
+            window.Focus();
+        }
+        private static BundleCollectorWindow OpenWindowInternal()
+        {
+            var window = GetWindow<BundleCollectorWindow>("Bundle Collector", true, EditorWindowDefine.GetDockedWindowTypes());
+            window.minSize = new Vector2(520, 360);
+            return window;
+        }
+
+        /// <summary>创建 Unity 2022.2+ 原生 TreeView 界面。</summary>
+        public void CreateGUI()
+        {
+            var root = rootVisualElement;
+            root.Clear();
+            Undo.undoRedoPerformed -= OnUndoRedo;
+            Undo.undoRedoPerformed += OnUndoRedo;
+            _commands = new CollectorTreeCommands(RecordUndo, OnConfigurationChanged);
+            _tree = new CollectorTreeView(OnTreeSelection, PopulateMenu, (node, paths) => Execute(() => _commands.AddCollectors(node, paths)),
+                (nodes, target) => Execute(() => _commands.Move(nodes, target)));
+            var visualAsset = UxmlLoader.LoadWindowUxml<BundleCollectorWindow>();
+            if (visualAsset == null) throw new InvalidOperationException("BundleCollectorWindow.uxml is missing.");
+            visualAsset.CloneTree(root);
+            var content = root.Q("ContentContainer");
+            content.Clear(); // 旧布局的两个 ListView 不保留；选择唯一来源为原生树。
+            content.style.minHeight = 0;
+            content.style.flexDirection = FlexDirection.Column;
+            var packageSettingsContainer = root.Q("PackageSettingsContainer");
+            packageSettingsContainer.RemoveFromHierarchy();
+            root.Q("PublicContainer").style.flexShrink = 0;
+            _globalSettings = root.Q("PublicContainer1");
+            root.Q<Button>("GlobalSettingsButton").clicked += () => { _showGlobalSettings = !_showGlobalSettings; RefreshGlobalSettings(); };
+            root.Q<Button>("PackageSettingsButton");
+            BindGlobalToggle(root.Q<Toggle>("ShowPackages"), BundleCollectorSettingData.ModifyShowPackageView);
+            root.Q<Toggle>("ShowPackages").tooltip = "Stored for the legacy window. The tree always shows package roots.";
+            BindGlobalToggle(root.Q<Toggle>("ShowRuleAlias"), BundleCollectorSettingData.ModifyShowEditorAlias);
+            BindGlobalToggle(root.Q<Toggle>("UniqueBundleName"), BundleCollectorSettingData.ModifyUniqueBundleName);
+            _saveButton = root.Q<Button>("SaveButton");
+            _saveButton.clicked += OnSaveButtonClicked;
+            root.Q<Button>("FixButton").clicked += () => Execute(() => { RecordUndo("Fix Configuration"); BundleCollectorSettingData.FixFile(); RefreshWindow(); });
+            root.Q<Button>("ExportButton").clicked += () => Execute(() =>
+            {
+                string path = EditorDialogUtility.OpenFolderPanel("Export XML", "Assets/");
+                if (path != null) BundleCollectorConfig.ExportXmlConfig($"{path}/{nameof(BundleCollectorConfig)}.xml");
+            });
+            root.Q<Button>("ImportButton").clicked += () => Execute(() =>
+            {
+                string path = EditorDialogUtility.OpenFilePath("Import XML", "Assets/", "xml");
+                if (path != null) { RecordUndo("Import Configuration"); BundleCollectorConfig.ImportXmlConfig(path); RefreshWindow(); }
+            });
+            _search = root.Q<ToolbarSearchField>("SearchField");
+            _search.tooltip = "Search package/group name or collector/asset path; matching ancestors remain visible.";
+            _search.RegisterValueChangedCallback(evt => _tree.Search(evt.newValue));
+            _search.RegisterCallback<DragUpdatedEvent>(evt => { if (DragAndDrop.objectReferences.Length > 0) DragAndDrop.visualMode = DragAndDropVisualMode.Copy; });
+            _search.RegisterCallback<DragPerformEvent>(evt =>
+            {
+                if (DragAndDrop.objectReferences.Length > 0) _search.value = AssetDatabase.GetAssetPath(DragAndDrop.objectReferences[0]);
+            });
+            root.Q<Button>("SearchButton").clicked += () => _tree.Search(_search.value);
+            _message = root.Q<Label>("SearchResultLabel");
+            _message.style.whiteSpace = WhiteSpace.Normal;
+            _message.style.height = StyleKeyword.Auto;
+            var split = new TwoPaneSplitView(0, 280, TwoPaneSplitViewOrientation.Horizontal) { name = "CollectorSplit" };
+            split.style.flexGrow = 1; split.style.minHeight = 0;
+            var left = new VisualElement { name = "CollectorTreePane" };
+            left.style.minWidth = 150;
+            left.Add(new Label("Packages / Groups / Collectors") { name = "CollectorTreeTitle" });
+            left.Add(_tree.Element);
+            _details = new ScrollView { name = "SelectedSettings" };
+            _details.style.minWidth = 240;
+            _details.style.flexGrow = 1;
+            split.Add(left); split.Add(_details); content.Add(split);
+            root.RegisterCallback<KeyDownEvent>(OnKeyDown, TrickleDown.TrickleDown);
+            RefreshGlobalSettings();
+            _tree.Restore(_selectedKeys, _expandedKeys);
+        }
+
+        /// <summary>关闭窗口时保存配置，并对称注销回调；不清除其他窗口的 Undo。</summary>
+        public void OnDestroy()
+        {
+            Undo.undoRedoPerformed -= OnUndoRedo;
+            if (BundleCollectorSettingData.IsDirty) BundleCollectorSettingData.SaveFile();
+        }
+        /// <summary>同步保存按钮的可用状态。</summary>
+        public void Update()
+        {
+            if (_saveButton != null) _saveButton.SetEnabled(BundleCollectorSettingData.IsDirty);
+        }
+        private void OnSaveButtonClicked()
+        {
+            BundleCollectorSettingData.SaveFile();
+        }
+        private void RecordUndo(string operation)
+        {
+            Undo.FlushUndoRecordObjects();
+            Undo.IncrementCurrentGroup();
+            StoreViewState();
+            Undo.RecordObject(this, "YooAsset " + operation);
+            Undo.RecordObject(BundleCollectorSettingData.Setting, "YooAsset " + operation);
+        }
+        private void StoreViewState()
+        {
+            _selectedKeys = _tree.SelectedKeys.ToList();
+            _expandedKeys = _tree.ExpandedKeys.ToList();
+        }
+        private void OnConfigurationChanged(IReadOnlyList<CollectorTreeNode> selection)
+        {
+            _tree.Refresh(selection, true);
+            _tree.Select(selection);
+            StoreViewState();
+            RefreshGlobalSettings();
+        }
+        private void OnUndoRedo()
+        {
+            if (_tree == null) return;
+            _tree.Restore(_selectedKeys, _expandedKeys);
+            RefreshGlobalSettings();
+        }
+        private void RefreshWindow()
+        {
+            _tree.Refresh(invalidatePreview: true);
+            RefreshGlobalSettings();
+        }
+        private void BindGlobalToggle(Toggle toggle, Action<bool> modify)
+        {
+            toggle.RegisterValueChangedCallback(evt => Execute(() => { RecordUndo("Global Settings"); modify(evt.newValue); RefreshWindow(); }));
+        }
+        private void RefreshGlobalSettings()
+        {
+            var root = rootVisualElement;
+            root.Q<Toggle>("ShowPackages").SetValueWithoutNotify(BundleCollectorSettingData.Setting.ShowPackageView);
+            root.Q<Toggle>("ShowRuleAlias").SetValueWithoutNotify(BundleCollectorSettingData.Setting.ShowEditorAlias);
+            root.Q<Toggle>("UniqueBundleName").SetValueWithoutNotify(BundleCollectorSettingData.Setting.UniqueBundleName);
+            _globalSettings.style.display = _showGlobalSettings ? DisplayStyle.Flex : DisplayStyle.None;
+            var help = root.Q("HelpBoxContainer");
+            help.Clear();
+            if (BundleCollectorSettingData.Setting.Packages.Count > 1 && !BundleCollectorSettingData.Setting.UniqueBundleName)
+                help.Add(new HelpBox("Multiple packages: enable Unique Bundle Name when bundles share an output directory.", HelpBoxMessageType.Warning));
+            Update();
+        }
+
+        private void OnTreeSelection(IReadOnlyList<CollectorTreeNode> selection)
+        {
+            _details.Clear();
+            _renameField = null;
+            _selectedPackage = null; _selectedGroup = null; _selectedCollector = null;
+            StoreViewState();
+            if (selection.Count != 1)
+            {
+                _details.Add(new HelpBox(selection.Count == 0 ? "Select a package, group or collector. Right-click the tree to create or paste configuration."
+                    : $"{selection.Count} nodes selected. Cut / Copy / Delete operate together on configuration nodes of the same kind. Select one node to edit settings.", HelpBoxMessageType.Info));
+                return;
+            }
+            var node = selection[0];
+            _selectedPackage = node.Package; _selectedGroup = node.Group; _selectedCollector = node.Collector;
+            _details.Add(new Label($"Package: {node.Package.PackageName}"));
+            if (node.Group != null) _details.Add(new Label($"Group: {node.Group.GroupName}"));
+            if (node.IsPreview)
+            {
+                _details.Add(new HelpBox($"Read-only asset preview: {node.AssetPath}\nInherits rules from collector: {node.Collector.CollectPath}. Editing the owner changes collection configuration, not this asset.", HelpBoxMessageType.Info));
+                var preview = new ObjectField("Preview Asset") { name = "PreviewAsset", objectType = typeof(UnityEngine.Object), allowSceneObjects = false };
+                preview.SetValueWithoutNotify(AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(node.AssetPath));
+                preview.SetEnabled(false); _details.Add(preview);
+                _details.Add(new Button(() => Ping(node)) { text = "Ping Asset" });
+                _details.Add(new Button(() => { EditorGUIUtility.systemCopyBuffer = node.AssetPath; }) { text = "Copy Path" });
+                _details.Add(new Button(() => _tree.Select(new[] { CollectorTreeNode.ForCollector(node.Package, node.Group, node.Collector) })) { text = "Select Owner Collector" });
+                AddCollectorFields(node, true);
+                return;
+            }
+            if (node.Kind == CollectorTreeKind.Package)
+            {
+                _renameField = AddText("PackageName", "Package Name", node.Package.PackageName, value => _commands.Rename(node, value));
+                AddText("PackageDesc", "Package Desc", node.Package.PackageDesc, value => ModifyPackage(node, () => node.Package.PackageDesc = value));
+                _details.Add(new Button(() => Execute(() => _commands.CreateGroup(node))) { text = "Add Group" });
+            }
+            else if (node.Kind == CollectorTreeKind.Group)
+            {
+                _renameField = AddText("GroupName", "Group Name", node.Group.GroupName, value => _commands.Rename(node, value));
+                AddText("GroupDesc", "Group Desc", node.Group.GroupDesc, value => ModifyGroup(node, () => node.Group.GroupDesc = value));
+                AddText("GroupTags", "Asset Tags", node.Group.AssetTags, value => ModifyGroup(node, () => node.Group.AssetTags = value));
+                AddRule("ActiveRule", "Group Active", node.Group.ActiveRuleName, BundleCollectorSettingData.GetGroupActiveRuleNames(), value => ModifyGroup(node, () => node.Group.ActiveRuleName = value));
+                _details.Add(new Button(() => AddFromProject(node)) { text = "Add Collector from Project Selection" });
+            }
+            else AddCollectorFields(node, false);
+            AddPackageSettings(node);
+        }
+
+        private TextField AddText(string name, string label, string value, Action<string> changed)
+        {
+            var field = new TextField(label) { name = name, isDelayed = true };
+            field.style.flexDirection = FlexDirection.Column;
+            field.SetValueWithoutNotify(value);
+            field.RegisterValueChangedCallback(evt => Execute(() => changed(evt.newValue)));
+            _details.Add(field);
+            return field;
+        }
+        private void AddRule(string name, string label, string value, List<RuleDisplayName> rules, Action<string> changed, VisualElement parent = null)
+        {
+            int index = rules.FindIndex(r => r.ClassName == value);
+            if (index < 0)
+            {
+                _details.Add(new HelpBox($"Rule '{value}' is unavailable. Select a registered rule or use Fix.", HelpBoxMessageType.Warning));
+                index = 0;
+            }
+            var field = new PopupField<RuleDisplayName>(label, rules, index) { name = name };
+            field.style.flexDirection = FlexDirection.Column;
+            field.formatListItemCallback = FormatRule;
+            field.formatSelectedValueCallback = FormatRule;
+            field.RegisterValueChangedCallback(evt => Execute(() => changed(evt.newValue.ClassName)));
+            (parent ?? _details).Add(field);
+        }
+        private string FormatRule(RuleDisplayName rule)
+        {
+            return BundleCollectorSettingData.Setting.ShowEditorAlias ? rule.DisplayName : rule.ClassName;
+        }
+        private void AddPackageSettings(CollectorTreeNode node)
+        {
+            var foldout = new Foldout { text = $"Package Settings ({node.Package.PackageName})", value = _showPackageSettings, name = "PackageSettings" };
+            foldout.RegisterValueChangedCallback(evt => _showPackageSettings = evt.newValue);
+            _packageSettings = foldout;
+            AddPackageToggle(node, "EnableAddressable", "Enable Addressable", node.Package.EnableAddressable, value => node.Package.EnableAddressable = value);
+            AddPackageToggle(node, "SupportExtensionless", "Support Extensionless", node.Package.SupportExtensionless, value => node.Package.SupportExtensionless = value);
+            AddPackageToggle(node, "LocationToLower", "Location To Lower", node.Package.LocationToLower, value => node.Package.LocationToLower = value);
+            AddPackageToggle(node, "IncludeAssetGUID", "Include Asset GUID", node.Package.IncludeAssetGUID, value => node.Package.IncludeAssetGUID = value);
+            AddPackageToggle(node, "AutoCollectShaders", "Auto Collect Shaders", node.Package.AutoCollectShaders, value => node.Package.AutoCollectShaders = value);
+            AddRule("IgnoreRulePopupField", "File Ignore Rule", node.Package.IgnoreRuleName, BundleCollectorSettingData.GetAssetIgnoreRuleNames(), value => ModifyPackage(node, () => node.Package.IgnoreRuleName = value), foldout);
+            if (node.Package.EnableAddressable && node.Package.LocationToLower)
+                foldout.Add(new HelpBox("Enable Addressable and Location To Lower cannot be enabled together.", HelpBoxMessageType.Error));
+            _details.Add(foldout);
+        }
+        private void AddPackageToggle(CollectorTreeNode node, string name, string label, bool value, Action<bool> changed)
+        {
+            var toggle = new Toggle(label) { name = name };
+            toggle.SetValueWithoutNotify(value);
+            toggle.RegisterValueChangedCallback(evt => Execute(() => ModifyPackage(node, () => changed(evt.newValue))));
+            _packageSettings.Add(toggle);
+        }
+        private void AddCollectorFields(CollectorTreeNode node, bool readOnly)
+        {
+            var collector = node.Collector;
+            var card = new VisualElement { name = "CollectorCard" };
+            card.style.marginTop = 8; card.style.marginBottom = 8;
+            _details.Add(card);
+            var field = new ObjectField("Collector Source") { name = "ObjectField1", objectType = typeof(UnityEngine.Object), allowSceneObjects = false };
+            field.style.flexDirection = FlexDirection.Column;
+            field.SetValueWithoutNotify(AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(collector.CollectPath));
+            field.RegisterValueChangedCallback(evt => Execute(() => _commands.ChangePath(node, AssetDatabase.GetAssetPath(evt.newValue))));
+            card.Add(field);
+            _renameField = AddText("CollectorPath", "Collector Path (configuration only — not asset rename)", collector.CollectPath, value => _commands.ChangePath(node, value));
+            var type = new EnumField("Collector Type", collector.CollectorType) { name = "CollectorType" };
+            type.RegisterValueChangedCallback(evt => Execute(() => ModifyCollector(node, () => collector.CollectorType = (ECollectorType)evt.newValue)));
+            _details.Add(type);
+            AddRule("AddressRule", "Address Rule", collector.AddressRuleName, BundleCollectorSettingData.GetAddressRuleNames(), value => ModifyCollector(node, () => collector.AddressRuleName = value));
+            AddRule("PackRule", "Pack Rule", collector.PackRuleName, BundleCollectorSettingData.GetBundlePackRuleNames(), value => ModifyCollector(node, () => collector.PackRuleName = value));
+            AddRule("FilterRule", "Filter Rule", collector.FilterRuleName, BundleCollectorSettingData.GetAssetFilterRuleNames(), value => ModifyCollector(node, () => collector.FilterRuleName = value));
+            AddText("CollectorUserData", "User Data", collector.UserData, value => ModifyCollector(node, () => collector.UserData = value));
+            var tags = AddText("CollectorTags", "Asset Tags", collector.AssetTags, value => ModifyCollector(node, () => collector.AssetTags = value));
+            tags.SetEnabled(collector.CollectorType == ECollectorType.MainAssetCollector);
+            if (readOnly)
+            {
+                card.SetEnabled(false);
+                foreach (var child in _details.Children().Where(c => c is BaseField<string> || c is EnumField || c is PopupField<RuleDisplayName>)) child.SetEnabled(false);
+                _renameField = null;
+            }
+        }
+        private void RequireCurrent(CollectorTreeNode node)
+        {
+            if (!CollectorTreeCommands.IsCurrent(node) || node.IsPreview) throw new InvalidOperationException("This settings view is stale or read-only. Select the configuration again.");
+        }
+        private void ModifyPackage(CollectorTreeNode node, Action modify)
+        {
+            RequireCurrent(node); RecordUndo("Package Settings"); modify(); BundleCollectorSettingData.ModifyPackage(node.Package); RefreshWindow();
+        }
+        private void ModifyGroup(CollectorTreeNode node, Action modify)
+        {
+            RequireCurrent(node); RecordUndo("Group Settings"); modify(); BundleCollectorSettingData.ModifyGroup(node.Package, node.Group); RefreshWindow();
+        }
+        private void ModifyCollector(CollectorTreeNode node, Action modify)
+        {
+            RequireCurrent(node); RecordUndo("Collector Settings"); modify(); BundleCollectorSettingData.ModifyCollector(node.Group, node.Collector); RefreshWindow();
+        }
+
+        internal void PopulateMenu(ContextualMenuPopulateEvent evt, CollectorTreeNode target)
+        {
+            var selected = _tree.Selection.ToList(); // 回调捕获配置引用；命令执行时再次确认仍属于当前配置。
+            if (target == null)
+            {
+                evt.menu.AppendAction("New Package", action => Execute(_commands.CreatePackage));
+                evt.menu.AppendAction(_commands.PasteLabel(null), action => Execute(() => _commands.Paste(null)), action => _commands.CanPaste(null) ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+                return;
+            }
+            if (target.IsPreview)
+            {
+                evt.menu.AppendAction("Ping Asset", action => Ping(target));
+                evt.menu.AppendAction("Copy Path", action => { EditorGUIUtility.systemCopyBuffer = target.AssetPath; });
+                return;
+            }
+            if (target.Kind == CollectorTreeKind.Package)
+                evt.menu.AppendAction("New Group", action => Execute(() => _commands.CreateGroup(target)), selected.Count == 1 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            if (target.Kind == CollectorTreeKind.Group)
+            {
+                evt.menu.AppendAction("Add Collector from Project Selection", action => AddFromProject(target), action => selected.Count == 1 && Selection.objects.Length > 0 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+                evt.menu.AppendAction("Add Collector / Choose Folder…", action => ChooseCollector(target, true), selected.Count == 1 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+                evt.menu.AppendAction("Add Collector / Choose Asset…", action => ChooseCollector(target, false), selected.Count == 1 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            }
+            evt.menu.AppendAction(target.Kind == CollectorTreeKind.Collector ? "Change Collector Path (F2; configuration only)" : "Rename (F2)", action => Execute(() => BeginRename(target)), selected.Count == 1 ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            evt.menu.AppendSeparator();
+            evt.menu.AppendAction("Cut Configuration", action => Execute(() => _commands.Copy(selected, true)), action => CollectorTreeCommands.CanEdit(selected) ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            evt.menu.AppendAction("Copy Configuration", action => Execute(() => _commands.Copy(selected)), action => CollectorTreeCommands.CanEdit(selected) ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            evt.menu.AppendAction(_commands.PasteLabel(target), action => Execute(() => _commands.Paste(target)), action => selected.Count == 1 && _commands.CanPaste(target) ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            evt.menu.AppendAction("Remove Configuration (not asset files)", action => Execute(() => _commands.Remove(selected)), action => CollectorTreeCommands.CanEdit(selected) ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            if (target.Kind == CollectorTreeKind.Collector) evt.menu.AppendAction("Ping Source", action => Ping(target));
+        }
+        private void BeginRename(CollectorTreeNode target = null)
+        {
+            if (target != null)
+            {
+                RequireCurrent(target);
+                _tree.Select(new[] { target });
+            }
+            if (_renameField == null || _tree.Selection.Count != 1) return;
+            var field = _renameField;
+            field.Q("unity-text-input")?.Focus();
+            field.SelectAll();
+            field.schedule.Execute(() => { field.Q("unity-text-input")?.Focus(); field.SelectAll(); });
+        }
+        private void AddFromProject(CollectorTreeNode node)
+        {
+            Execute(() => _commands.AddCollectors(node, Selection.objects.Select(AssetDatabase.GetAssetPath)));
+        }
+        private void ChooseCollector(CollectorTreeNode node, bool folder)
+        {
+            string path = folder ? EditorUtility.OpenFolderPanel("Choose Collector Folder (configuration only)", Application.dataPath, string.Empty)
+                : EditorUtility.OpenFilePanel("Choose Collector Asset (configuration only)", Application.dataPath, string.Empty);
+            if (path.Length == 0) return;
+            path = FileUtil.GetProjectRelativePath(path);
+            Execute(() => _commands.AddCollectors(node, new[] { path }));
+        }
+        private static void Ping(CollectorTreeNode node)
+        {
+            EditorGUIUtility.PingObject(AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(node.AssetPath));
+        }
+        internal void OnKeyDown(KeyDownEvent evt)
+        {
+            // 输入域拥有自己的复制/删除/保存键，树快捷键绝不抢占 TextField/ObjectField 编辑。
+            var focused = rootVisualElement.focusController?.focusedElement as VisualElement;
+            for (var element = focused; element != null; element = element.parent)
+                if (element is TextField || element is ObjectField || element is ToolbarSearchField) return;
+            if (focused == null || (focused != _tree.Element && !_tree.Element.Contains(focused))) return;
+            bool modifier = evt.ctrlKey || evt.commandKey;
+            var selected = _tree.Selection.ToList();
+            bool handled = true;
+            if (modifier && evt.keyCode == KeyCode.S) Execute(OnSaveButtonClicked);
+            else if (modifier && evt.keyCode == KeyCode.C && CollectorTreeCommands.CanEdit(selected)) Execute(() => _commands.Copy(selected));
+            else if (modifier && evt.keyCode == KeyCode.X && CollectorTreeCommands.CanEdit(selected)) Execute(() => _commands.Copy(selected, true));
+            else if (modifier && evt.keyCode == KeyCode.V && selected.Count <= 1 && _commands.CanPaste(selected.FirstOrDefault())) Execute(() => _commands.Paste(selected.FirstOrDefault()));
+            else if (evt.keyCode == KeyCode.Delete && CollectorTreeCommands.CanEdit(selected)) Execute(() => _commands.Remove(selected));
+            else if (evt.keyCode == KeyCode.F2 && selected.Count == 1 && !selected[0].IsPreview) BeginRename();
+            else handled = false;
+            if (handled) { evt.StopImmediatePropagation(); evt.PreventDefault(); }
+        }
+        private void Execute(Action command)
+        {
+            try
+            {
+                command();
+                _message.text = string.Empty; _message.style.display = DisplayStyle.None;
+            }
+            catch (Exception exception)
+            {
+                // 编辑器用户输入边界：失败可见，原子命令预验失败不会修改配置。
+                _message.text = exception.Message; _message.style.color = new Color(1, 0.45f, 0.3f); _message.style.display = DisplayStyle.Flex;
+                Debug.LogWarning("Collector configuration: " + exception.Message);
+            }
+        }
+    }
+#endif
 }
