@@ -32,6 +32,13 @@ namespace YooAsset.Editor
         /// </summary>
         public void CheckBuildParameters()
         {
+            // 源集合需要 SBP 的实际写入对象，不支持的管线必须在准备阶段失败。
+            if (Parameters.FileNameStyle == EFileNameStyle.SourceHashName
+                && (!(Parameters is ScriptableBuildParameters)
+                    || Parameters.BuildPipeline != EBuildPipeline.ScriptableBuildPipeline.ToString()))
+            {
+                throw new NotSupportedException($"FileNameStyle.SourceHashName requires ScriptableBuildPipeline and ScriptableBuildParameters, not '{Parameters.GetType().Name}' / '{Parameters.BuildPipeline}'.");
+            }
             Parameters.CheckBuildParameters();
         }
 

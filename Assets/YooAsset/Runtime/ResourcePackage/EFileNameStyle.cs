@@ -20,5 +20,10 @@ namespace YooAsset
         /// 资源包名称 + 哈希值名称
         /// </summary>
         BundleName_HashName = 2,
+
+        /// <summary>
+        /// 原始源集合 SHA256 名称（仅支持可编程构建管线，不改变文件校验哈希）
+        /// </summary>
+        SourceHashName = 3,
     }
 }

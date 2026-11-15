@@ -3,4 +3,5 @@ using System.Runtime.CompilerServices;
 // 外部友元
 [assembly: InternalsVisibleTo("YooAsset.Extension.Editor")]
 [assembly: InternalsVisibleTo("YooAsset.Custom.Editor")]
+[assembly: InternalsVisibleTo("YooAsset.Tests.Editor")]
 [assembly: InternalsVisibleTo("Assembly-CSharp-Editor")]

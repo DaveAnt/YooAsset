@@ -47,6 +47,9 @@
 ExportedObj/
 .consulo/
 *.csproj
+!Tools/SourceBundleHash.Tests/SourceBundleHash.Tests.csproj
+/Tools/SourceBundleHash.Tests/bin/
+/Tools/SourceBundleHash.Tests/obj/
 *.unityproj
 *.sln
 *.suo

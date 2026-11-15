@@ -26,6 +26,7 @@ namespace YooAsset
                     }
 
                 case EFileNameStyle.BundleName:
+                case EFileNameStyle.SourceHashName:
                     return bundleName;
 
                 case EFileNameStyle.BundleName_HashName:
