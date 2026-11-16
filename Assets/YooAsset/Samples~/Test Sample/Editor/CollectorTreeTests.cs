@@ -70,6 +70,18 @@ namespace YooAsset.Tests.Editor
         }
 
         [Test]
+        public void NativeDragRequiresHeldLeftButtonAndMouseDragContext()
+        {
+            Assert.IsFalse(CollectorTreeView.CanStartConfigurationDrag(1, null));
+            foreach (var type in new[] { EventType.MouseMove, EventType.MouseUp, EventType.Repaint, EventType.Layout, EventType.Used, EventType.MouseDown })
+                Assert.IsFalse(CollectorTreeView.CanStartConfigurationDrag(1, new Event { type = type }), type.ToString());
+            Assert.IsFalse(CollectorTreeView.CanStartConfigurationDrag(0, new Event { type = EventType.MouseDrag }));
+            Assert.IsFalse(CollectorTreeView.CanStartConfigurationDrag(2, new Event { type = EventType.MouseDrag }));
+            Assert.IsTrue(CollectorTreeView.CanStartConfigurationDrag(1, new Event { type = EventType.MouseDrag }));
+            Assert.IsTrue(CollectorTreeView.CanStartConfigurationDrag(3, new Event { type = EventType.MouseDrag }));
+        }
+
+        [Test]
         public void CreateNamesAreUniqueAndRenameRejectsCollisionBeforeUndo()
         {
             _commands.CreatePackage();

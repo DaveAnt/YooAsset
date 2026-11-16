@@ -138,6 +138,11 @@ namespace YooAsset.Editor
             _tree.RegisterCallback<KeyDownEvent>(evt => { if (evt.keyCode == KeyCode.Escape) { _dragPending = false; _dragSource = null; } }, TrickleDown.TrickleDown);
             _tree.RegisterCallback<PointerMoveEvent>(evt =>
             {
+                if (!CanStartConfigurationDrag(evt.pressedButtons, Event.current))
+                {
+                    if ((evt.pressedButtons & 1) == 0) { _dragPending = false; _dragSource = null; }
+                    return;
+                }
                 if (!_dragPending || Vector2.Distance(_dragStart, evt.position) < 8 || !CollectorTreeCommands.CanEdit(_selected)
                     || !CollectorTreeCommands.IsCurrent(_dragSource) || !_selected.Any(n => n.Value == _dragSource.Value)) return;
                 _dragPending = false;
@@ -173,6 +178,12 @@ namespace YooAsset.Editor
                 }
                 evt.StopPropagation();
             });
+        }
+
+        // PointerMove 包括普通移动、释放和兼容事件；原生拖放必须由按住左键的 MouseDrag 启动。
+        internal static bool CanStartConfigurationDrag(int pressedButtons, Event current)
+        {
+            return (pressedButtons & 1) != 0 && current != null && current.type == EventType.MouseDrag;
         }
 
         internal void Search(string search)
