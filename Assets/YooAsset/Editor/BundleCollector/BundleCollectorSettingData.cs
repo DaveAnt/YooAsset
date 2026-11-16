@@ -200,6 +200,11 @@ namespace YooAsset.Editor
             }
         }
 
+        internal static void MarkDirty()
+        {
+            IsDirty = true;
+        }
+
         /// <summary>
         /// 修复配置文件
         /// </summary>

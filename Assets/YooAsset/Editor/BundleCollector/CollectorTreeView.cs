@@ -153,7 +153,7 @@ namespace YooAsset.Editor
                 var sources = DragAndDrop.GetGenericData(DragKey) as List<CollectorTreeNode>;
                 bool configurationDrag = DragAndDrop.objectReferences.Length == 0 && sources != null;
                 DragAndDrop.visualMode = configurationDrag ? (CollectorTreeCommands.CanMove(sources, target) ? DragAndDropVisualMode.Move : DragAndDropVisualMode.Rejected)
-                    : target != null && target.Kind == CollectorTreeKind.Group && DragAndDrop.objectReferences.Length > 0 ? DragAndDropVisualMode.Copy : DragAndDropVisualMode.Rejected;
+                    : CollectorTreeCommands.CanAddProjectAssets(target, DragAndDrop.objectReferences) ? DragAndDropVisualMode.Copy : DragAndDropVisualMode.Rejected;
                 evt.StopPropagation();
             });
             _tree.RegisterCallback<DragPerformEvent>(evt =>
@@ -165,7 +165,7 @@ namespace YooAsset.Editor
                     if (CollectorTreeCommands.CanMove(sources, target)) { DragAndDrop.AcceptDrag(); _move(sources, target); }
                     DragAndDrop.SetGenericData(DragKey, null);
                 }
-                else if (target != null && target.Kind == CollectorTreeKind.Group && DragAndDrop.objectReferences.Length > 0)
+                else if (CollectorTreeCommands.CanAddProjectAssets(target, DragAndDrop.objectReferences))
                 {
                     var paths = DragAndDrop.objectReferences.Select(AssetDatabase.GetAssetPath).ToArray();
                     DragAndDrop.AcceptDrag();
@@ -321,25 +321,35 @@ namespace YooAsset.Editor
             var row = new VisualElement { name = "CollectorTreeRow" };
             row.style.flexDirection = FlexDirection.Row;
             row.style.alignItems = Align.Center;
+            row.style.flexGrow = 1; row.style.minWidth = 0;
+            row.RegisterCallback<AttachToPanelEvent>(evt =>
+            {
+                var content = row.parent;
+                content.style.minWidth = 0;
+                content.style.flexShrink = 1;
+            });
             var icon = new Image { name = "Icon" };
-            icon.style.width = 16; icon.style.height = 16; icon.style.marginRight = 5;
+            icon.style.width = 16; icon.style.height = 16; icon.style.marginRight = 5; icon.style.flexShrink = 0;
             row.Add(icon);
-            var badge = new Label { name = "KindBadge", pickingMode = PickingMode.Ignore };
-            badge.style.height = 18; badge.style.flexShrink = 0;
-            badge.style.marginRight = 6;
-            badge.style.paddingLeft = 8; badge.style.paddingRight = 8;
-            badge.style.borderTopLeftRadius = 9; badge.style.borderTopRightRadius = 9;
-            badge.style.borderBottomLeftRadius = 9; badge.style.borderBottomRightRadius = 9;
-            badge.style.fontSize = 10;
-            badge.style.unityFontStyleAndWeight = FontStyle.Bold;
-            badge.style.unityTextAlign = TextAnchor.MiddleCenter;
-            row.Add(badge);
             var label = new Label { name = "Name" };
-            label.style.flexGrow = 1;
+            label.style.flexGrow = 0; label.style.flexShrink = 1;
             label.style.minWidth = 0;
             label.style.overflow = Overflow.Hidden;
             label.style.textOverflow = TextOverflow.Ellipsis;
             row.Add(label);
+            var badge = new Label { name = "KindBadge", pickingMode = PickingMode.Ignore };
+            badge.style.height = 14; badge.style.flexShrink = 0;
+            badge.style.marginLeft = 4;
+            badge.style.paddingLeft = 4; badge.style.paddingRight = 4;
+            badge.style.borderTopLeftRadius = 7; badge.style.borderTopRightRadius = 7;
+            badge.style.borderBottomLeftRadius = 7; badge.style.borderBottomRightRadius = 7;
+            badge.style.fontSize = 9;
+            badge.style.unityFontStyleAndWeight = FontStyle.Bold;
+            badge.style.unityTextAlign = TextAnchor.MiddleCenter;
+            row.Add(badge);
+            var space = new VisualElement { name = "RowSpace", pickingMode = PickingMode.Ignore };
+            space.style.flexGrow = 1;
+            row.Add(space);
             return row;
         }
 
@@ -371,7 +381,14 @@ namespace YooAsset.Editor
         private static CollectorTreeNode FindRowNode(VisualElement element)
         {
             for (; element != null; element = element.parent)
+            {
                 if (element.userData is CollectorTreeNode node) return node.Kind == CollectorTreeKind.Placeholder ? null : node;
+                if (element.ClassListContains("unity-tree-view__item"))
+                {
+                    var row = element.Q<VisualElement>("CollectorTreeRow");
+                    if (row?.userData is CollectorTreeNode item) return item.Kind == CollectorTreeKind.Placeholder ? null : item;
+                }
+            }
             return null;
         }
     }

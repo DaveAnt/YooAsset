@@ -5,7 +5,7 @@ Unity **2022.2 及以上**使用原生 UI Toolkit TreeView；Unity 2019.4–2022
 ## 树与设置
 
 - Package → Group → Collector 是配置层级。Collector 可以引用项目文件夹或单个资源。
-- 第一层名称旁显示绿色椭圆 `package` 标签，第二层显示白色椭圆 `group` 标签；Collector 和资源预览不显示层级标签。
+- 名称后紧跟 14px 小椭圆标签：Package 为绿色 `package`，Group 为白色 `group`；Collector 和资源预览不显示层级标签。
 - 展开目录收集器时按需投影当前规则实际收集的子目录/文件。预览节点继承所属 Collector，不新增逐文件配置。
 - 右侧只显示当前选中配置的设置。多选显示操作上下文，不误显示其中某个节点的设置。预览右侧明确标记只读，并可定位所属 Collector。
 - 搜索名称或路径时保留匹配节点的祖先。拖动中间分隔线调整树和设置区域宽度。
@@ -26,6 +26,14 @@ Unity **2022.2 及以上**使用原生 UI Toolkit TreeView；Unity 2019.4–2022
 同一 Package 的重复收集路径和实际规则收集结果重叠会在修改前报错；跨 Package 可复制同一源。剪切移动排除自身旧配置后校验。批量配置操作先完整校验，再一次 Undo 提交，失败不产生半批修改。
 
 Project 资源拖到 Group 只新增 Collector 配置。配置节点拖到对应父层级可移动；拖到同父的同类兄弟节点可按原顺序插到其前面。资源预览和错误层级不是配置拖放目标。
+
+## 文件夹后缀筛选
+
+文件夹 Collector 的 **File Extensions** 菜单支持 **All** 或多个后缀（例如 `.prefab`、`.png`、`.mat`）。All 表示不额外限制后缀，不覆盖原 Filter Rule / Ignore Rule。取消最后一个后缀会提示保留至少一项或显式选 All；`(no extension)` 表示无后缀文件。
+
+后缀筛选只限制主动收集文件：只选 `.prefab` 时，该 Prefab 引用的材质、贴图等仍会作为依赖进入 AB。单文件 Collector 不受该白名单限制。预览继承所属 Collector，不能编辑筛选。后缀选择随保存、深复制、XML 导出、Undo/Redo 保留；旧配置缺少列表或 XML 属性时等同 All。
+
+Project 中的文件夹、单文件或混合多选都可拖到 Group；文件夹 All 与其内部已单独收集的文件重叠时，仍会整体拒绝重复收集。后缀扩大造成重叠时也会在提交前拒绝，不产生半批修改。
 
 ## 快捷键
 

@@ -1127,7 +1127,7 @@ namespace YooAsset.Editor
                 collector.CollectPath = AssetDatabase.GetAssetPath(evt.newValue);
                 collector.CollectorGUID = AssetDatabase.AssetPathToGUID(collector.CollectPath);
                 BundleCollectorSettingData.ModifyCollector(selectGroup, collector);
-                RefreshFoldoutContent(foldout, selectGroup, collector);
+                RefreshCollectorListView();
             });
             UIElementsTools.RefreshObjectFieldShowPath(objectField1);
 
@@ -1193,6 +1193,30 @@ namespace YooAsset.Editor
                 collector.UserData = evt.newValue;
                 BundleCollectorSettingData.ModifyCollector(selectGroup, collector);
             });
+
+            // Folder suffixes use the same collection filter as the modern tree.
+            if (AssetDatabase.IsValidFolder(collector.CollectPath))
+            {
+                var package = _packageListView.selectedItem as BundleCollectorPackage;
+                element.Add(new CollectorExtensionMenu(collector.CollectExtensions, () =>
+                {
+                    var command = new CollectCommand(package.PackageName, BundleCollectorSettingData.GetAssetIgnoreRuleInstance(package.IgnoreRuleName));
+                    command.SetFlag(ECollectFlags.IgnoreGetDependencies, true);
+                    return collector.GetAvailableExtensions(command, selectGroup);
+                }, values =>
+                {
+                    var candidate = JsonUtility.FromJson<BundleCollectorPackage>(JsonUtility.ToJson(package));
+                    candidate.Groups[package.Groups.IndexOf(selectGroup)].Collectors[index].CollectExtensions = values;
+                    candidate.CheckConfigError();
+                    var command = new CollectCommand(candidate.PackageName, BundleCollectorSettingData.GetAssetIgnoreRuleInstance(candidate.IgnoreRuleName));
+                    command.SetFlag(ECollectFlags.IgnoreGetDependencies, true);
+                    candidate.GetCollectAssets(command);
+                    Undo.RecordObject(BundleCollectorSettingData.Setting, "Change Collector Extensions");
+                    collector.CollectExtensions = values;
+                    BundleCollectorSettingData.ModifyCollector(selectGroup, collector);
+                    RefreshFoldoutContent(foldout, selectGroup, collector);
+                }, error => Debug.LogError(error)));
+            }
 
             // Tags
             var textField1 = element.Q<TextField>("TextField1");
@@ -1542,6 +1566,7 @@ namespace YooAsset.Editor
         private void OnUndoRedo()
         {
             if (_tree == null) return;
+            BundleCollectorSettingData.MarkDirty();
             _tree.Restore(_selectedKeys, _expandedKeys);
             RefreshGlobalSettings();
         }
@@ -1675,6 +1700,15 @@ namespace YooAsset.Editor
             field.SetValueWithoutNotify(AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(collector.CollectPath));
             field.RegisterValueChangedCallback(evt => Execute(() => _commands.ChangePath(node, AssetDatabase.GetAssetPath(evt.newValue))));
             card.Add(field);
+            if (AssetDatabase.IsValidFolder(collector.CollectPath))
+            {
+                var extensions = new CollectorExtensionMenu(collector.CollectExtensions,
+                    () => collector.GetAvailableExtensions(CollectorTreeCommands.CreateCollectCommand(node.Package), node.Group),
+                    values => _commands.ChangeExtensions(node, values),
+                    error => Execute(() => { throw error; }));
+                card.Add(extensions);
+                extensions.SetEnabled(!readOnly);
+            }
             _renameField = AddText("CollectorPath", "Collector Path (configuration only — not asset rename)", collector.CollectPath, value => _commands.ChangePath(node, value));
             var type = new EnumField("Collector Type", collector.CollectorType) { name = "CollectorType" };
             type.RegisterValueChangedCallback(evt => Execute(() => ModifyCollector(node, () => collector.CollectorType = (ECollectorType)evt.newValue)));

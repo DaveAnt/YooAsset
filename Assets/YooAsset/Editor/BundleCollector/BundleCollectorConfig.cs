@@ -2,6 +2,7 @@
 using System.IO;
 using System.Xml.Linq;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEditor;
 using UnityEngine;
 
@@ -42,6 +43,7 @@ namespace YooAsset.Editor
         private const string XmlAddressRule = "AddressRule";
         private const string XmlPackRule = "PackRule";
         private const string XmlFilterRule = "FilterRule";
+        private const string XmlCollectExtensions = "CollectExtensions";
         private const string XmlUserData = "UserData";
         private const string XmlAssetTags = "AssetTags";
 
@@ -118,6 +120,9 @@ namespace YooAsset.Editor
                         collector.AddressRuleName = ReadStringAttribute(collectorElement, XmlAddressRule, XmlCollector);
                         collector.PackRuleName = ReadStringAttribute(collectorElement, XmlPackRule, XmlCollector);
                         collector.FilterRuleName = ReadStringAttribute(collectorElement, XmlFilterRule, XmlCollector);
+                        string extensions = (string)collectorElement.Attribute(XmlCollectExtensions);
+                        collector.CollectExtensions = string.IsNullOrEmpty(extensions) ? new List<string>()
+                            : BundleCollector.NormalizeExtensions(extensions.Split(';').Select(value => value == "<none>" ? string.Empty : value));
                         collector.UserData = ReadStringAttribute(collectorElement, XmlUserData, XmlCollector);
                         collector.AssetTags = ReadStringAttribute(collectorElement, XmlAssetTags, XmlCollector);
                         group.Collectors.Add(collector);
@@ -206,6 +211,7 @@ namespace YooAsset.Editor
                             new XAttribute(XmlAddressRule, collector.AddressRuleName),
                             new XAttribute(XmlPackRule, collector.PackRuleName),
                             new XAttribute(XmlFilterRule, collector.FilterRuleName),
+                            new XAttribute(XmlCollectExtensions, string.Join(";", BundleCollector.NormalizeExtensions(collector.CollectExtensions).Select(value => value.Length == 0 ? "<none>" : value))),
                             new XAttribute(XmlUserData, collector.UserData),
                             new XAttribute(XmlAssetTags, collector.AssetTags)
                         ));

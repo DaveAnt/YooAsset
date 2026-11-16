@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -42,6 +43,11 @@ namespace YooAsset.Editor
         /// 过滤规则类名
         /// </summary>
         public string FilterRuleName = nameof(CollectAll);
+
+        /// <summary>
+        /// 文件夹主动收集的后缀白名单；null 或空列表表示 All。后缀不限制资源依赖，单文件收集器忽略此列表。
+        /// </summary>
+        public List<string> CollectExtensions = new List<string>();
 
         /// <summary>
         /// 资源分类标签
@@ -99,6 +105,8 @@ namespace YooAsset.Editor
 
             if (BundleCollectorSettingData.HasAddressRuleName(AddressRuleName) == false)
                 throw new InvalidOperationException($"Invalid {nameof(IAddressRule)} class type: '{AddressRuleName}' in collector: '{CollectPath}'.");
+
+            NormalizeExtensions(CollectExtensions);
         }
 
         /// <summary>
@@ -172,7 +180,9 @@ namespace YooAsset.Editor
 
             // 收集打包资源路径
             List<string> findAssets = new List<string>();
-            if (AssetDatabase.IsValidFolder(CollectPath))
+            bool isFolder = AssetDatabase.IsValidFolder(CollectPath);
+            var extensions = isFolder ? NormalizeExtensions(CollectExtensions) : null;
+            if (isFolder)
             {
                 IAssetFilterRule filterRuleInstance = BundleCollectorSettingData.GetAssetFilterRuleInstance(FilterRuleName);
                 string findAssetType = filterRuleInstance.FindAssetType;
@@ -189,6 +199,8 @@ namespace YooAsset.Editor
             // 收集打包资源信息
             foreach (string assetPath in findAssets)
             {
+                if (isFolder && extensions.Count > 0 && !extensions.Contains(Path.GetExtension(assetPath), StringComparer.OrdinalIgnoreCase))
+                    continue;
                 var assetInfo = new EditorAssetInfo(assetPath);
                 if (command.IgnoreRule.IsIgnoreAsset(assetInfo) == false && IsCollectAsset(group, assetInfo))
                 {
@@ -232,6 +244,37 @@ namespace YooAsset.Editor
             return result.Values.ToList();
         }
 
+
+        internal static List<string> NormalizeExtensions(IEnumerable<string> extensions)
+        {
+            var result = new SortedSet<string>(StringComparer.Ordinal);
+            if (extensions == null) return result.ToList();
+            foreach (string extension in extensions)
+            {
+                if (extension == null) throw new ArgumentException("CollectExtensions must not contain null entries.", nameof(extensions));
+                string value = extension.Trim().ToLowerInvariant();
+                if (value.Length == 0) { result.Add(string.Empty); continue; } // 无后缀文件使用空字符串条目，与 All 的空集合区分。
+                if (value.StartsWith("*.", StringComparison.Ordinal)) value = value.Substring(1);
+                if (!value.StartsWith(".", StringComparison.Ordinal)) value = "." + value;
+                if (value.Length == 1 || value.IndexOfAny(new[] { '/', '\\', '*', ';', ',', ' ', '\t', '\r', '\n' }) >= 0)
+                    throw new ArgumentException($"CollectExtensions entry '{extension}' must be a file suffix such as '.prefab'.", nameof(extensions));
+                result.Add(value);
+            }
+            return result.ToList();
+        }
+
+        internal List<string> GetAvailableExtensions(CollectCommand command, BundleCollectorGroup group)
+        {
+            IAssetFilterRule filter = BundleCollectorSettingData.GetAssetFilterRuleInstance(FilterRuleName);
+            var result = new SortedSet<string>(NormalizeExtensions(CollectExtensions), StringComparer.Ordinal);
+            foreach (string path in EditorAssetUtility.FindAssets(filter.FindAssetType, CollectPath))
+            {
+                var asset = new EditorAssetInfo(path);
+                if (!command.IgnoreRule.IsIgnoreAsset(asset) && IsCollectAsset(group, asset))
+                    result.Add(Path.GetExtension(path).ToLowerInvariant());
+            }
+            return result.ToList();
+        }
 
         /// <summary>
         /// 创建收集资源信息对象

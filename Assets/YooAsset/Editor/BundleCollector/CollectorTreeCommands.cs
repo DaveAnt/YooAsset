@@ -158,6 +158,34 @@ namespace YooAsset.Editor
             _changed(new[] { node });
         }
 
+        internal void ChangeExtensions(CollectorTreeNode node, IEnumerable<string> extensions)
+        {
+            RequireTarget(node, CollectorTreeKind.Collector);
+            if (!AssetDatabase.IsValidFolder(node.Collector.CollectPath))
+                throw new InvalidOperationException("Select a folder collector to change its file suffixes.");
+            var values = BundleCollector.NormalizeExtensions(extensions);
+            if (values.SequenceEqual(BundleCollector.NormalizeExtensions(node.Collector.CollectExtensions))) return;
+            var candidate = ClonePackage(node.Package);
+            candidate.Groups[node.Package.Groups.IndexOf(node.Group)].Collectors[node.Group.Collectors.IndexOf(node.Collector)].CollectExtensions = values;
+            ValidatePackage(candidate);
+            _recordUndo("Change Collector Extensions");
+            node.Collector.CollectExtensions = values;
+            BundleCollectorSettingData.ModifyCollector(node.Group, node.Collector);
+            _changed(new[] { node });
+        }
+
+        internal static bool CanAddProjectAssets(CollectorTreeNode target, UnityEngine.Object[] assets)
+        {
+            return IsCurrent(target) && target.Kind == CollectorTreeKind.Group && assets.Length > 0
+                && assets.All(asset => IsProjectPath(AssetDatabase.GetAssetPath(asset)));
+        }
+
+        private static bool IsProjectPath(string path)
+        {
+            return !string.IsNullOrEmpty(path) && (path.StartsWith("Assets/", StringComparison.Ordinal) || path.StartsWith("Packages/", StringComparison.Ordinal))
+                && !string.IsNullOrEmpty(AssetDatabase.AssetPathToGUID(path));
+        }
+
         internal void Remove(IReadOnlyList<CollectorTreeNode> nodes)
         {
             RequireEditable(nodes);
