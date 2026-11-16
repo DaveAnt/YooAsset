@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.UIElements;
 using YooAsset.Editor;
 
 namespace YooAsset.Tests.Editor
@@ -206,6 +207,51 @@ namespace YooAsset.Tests.Editor
             AssetDatabase.ImportAsset(Root + "/Setting.asset", ImportAssetOptions.ForceSynchronousImport | ImportAssetOptions.ForceUpdate);
             var reloaded = AssetDatabase.LoadAssetAtPath<BundleCollectorSetting>(Root + "/Setting.asset");
             Assert.AreEqual(_secondPath, reloaded.Packages.Single().Groups.Single().Collectors.Single().CollectPath);
+        }
+
+        [Test]
+        public void LayerBadgesUseCapsuleColorsAndResetWhenRowsAreRecycled()
+        {
+            var tree = new CollectorTreeView(selected => { }, (menu, node) => { }, (node, paths) => { }, (nodes, target) => { });
+            var package = new BundleCollectorPackage { PackageName = "BadgePackage" };
+            var group = new BundleCollectorGroup { GroupName = "BadgeGroup" };
+            var collector = new BundleCollector { CollectPath = _path };
+            var nodes = new[]
+            {
+                CollectorTreeNode.ForPackage(package),
+                CollectorTreeNode.ForGroup(package, group),
+                CollectorTreeNode.ForCollector(package, group, collector),
+                new CollectorTreeNode { Kind = CollectorTreeKind.PreviewFolder, Package = package, Group = group, Collector = collector, AssetPath = Root + "/Content" },
+                new CollectorTreeNode { Kind = CollectorTreeKind.PreviewAsset, Package = package, Group = group, Collector = collector, AssetPath = _path },
+                new CollectorTreeNode { Kind = CollectorTreeKind.Placeholder, Package = package, Group = group, Collector = collector, AssetPath = Root + "/Content/..." }
+            };
+            tree.Element.SetRootItems(nodes.Select((node, index) => new TreeViewItemData<CollectorTreeNode>(index + 1, node)).ToList());
+            var row = tree.Element.makeItem();
+            var badge = row.Q<Label>("KindBadge");
+            Assert.AreEqual(PickingMode.Ignore, badge.pickingMode);
+            Assert.AreEqual(18f, badge.style.height.value.value);
+            Assert.AreEqual(9f, badge.style.borderTopLeftRadius.value.value);
+            Assert.AreEqual(9f, badge.style.borderBottomRightRadius.value.value);
+            tree.Element.bindItem(row, 0);
+            Assert.AreEqual("package", badge.text);
+            Assert.AreEqual(DisplayStyle.Flex, badge.style.display.value);
+            Assert.AreEqual(new Color(0.18f, 0.62f, 0.32f), badge.style.backgroundColor.value);
+            Assert.AreEqual(Color.white, badge.style.color.value);
+            tree.Element.bindItem(row, 1);
+            Assert.AreEqual("group", badge.text);
+            Assert.AreEqual(DisplayStyle.Flex, badge.style.display.value);
+            Assert.AreEqual(Color.white, badge.style.backgroundColor.value);
+            Assert.AreEqual(new Color(0.15f, 0.15f, 0.15f), badge.style.color.value);
+            for (int index = 2; index < nodes.Length; index++)
+            {
+                tree.Element.bindItem(row, index);
+                Assert.AreEqual(DisplayStyle.None, badge.style.display.value);
+                Assert.AreEqual(string.Empty, badge.text);
+            }
+            tree.Element.bindItem(row, 0);
+            Assert.AreEqual("package", badge.text);
+            Assert.AreEqual(DisplayStyle.Flex, badge.style.display.value);
+            Assert.AreEqual(new Color(0.18f, 0.62f, 0.32f), badge.style.backgroundColor.value);
         }
 
         private CollectorTreeNode CreateGroup()

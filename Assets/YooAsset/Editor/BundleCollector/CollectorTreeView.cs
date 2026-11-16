@@ -324,8 +324,19 @@ namespace YooAsset.Editor
             var icon = new Image { name = "Icon" };
             icon.style.width = 16; icon.style.height = 16; icon.style.marginRight = 5;
             row.Add(icon);
+            var badge = new Label { name = "KindBadge", pickingMode = PickingMode.Ignore };
+            badge.style.height = 18; badge.style.flexShrink = 0;
+            badge.style.marginRight = 6;
+            badge.style.paddingLeft = 8; badge.style.paddingRight = 8;
+            badge.style.borderTopLeftRadius = 9; badge.style.borderTopRightRadius = 9;
+            badge.style.borderBottomLeftRadius = 9; badge.style.borderBottomRightRadius = 9;
+            badge.style.fontSize = 10;
+            badge.style.unityFontStyleAndWeight = FontStyle.Bold;
+            badge.style.unityTextAlign = TextAnchor.MiddleCenter;
+            row.Add(badge);
             var label = new Label { name = "Name" };
             label.style.flexGrow = 1;
+            label.style.minWidth = 0;
             label.style.overflow = Overflow.Hidden;
             label.style.textOverflow = TextOverflow.Ellipsis;
             row.Add(label);
@@ -336,6 +347,13 @@ namespace YooAsset.Editor
         {
             var node = _tree.GetItemDataForIndex<CollectorTreeNode>(index);
             row.userData = node;
+            var badge = row.Q<Label>("KindBadge");
+            bool isPackage = node.Kind == CollectorTreeKind.Package;
+            bool isGroup = node.Kind == CollectorTreeKind.Group;
+            badge.style.display = isPackage || isGroup ? DisplayStyle.Flex : DisplayStyle.None;
+            badge.text = isPackage ? "package" : isGroup ? "group" : string.Empty;
+            badge.style.backgroundColor = isPackage ? new Color(0.18f, 0.62f, 0.32f) : Color.white;
+            badge.style.color = isPackage ? Color.white : new Color(0.15f, 0.15f, 0.15f);
             row.Q<Label>("Name").text = node.Kind == CollectorTreeKind.Placeholder ? "Expand to preview collected assets" : node.Label;
             row.tooltip = node.IsPreview ? $"Read-only preview: {node.AssetPath}\nOwner collector: {node.Collector.CollectPath}" : node.AssetPath ?? node.Label;
             row.Q<Image>("Icon").image = node.Kind <= CollectorTreeKind.Group ? EditorGUIUtility.IconContent("Folder Icon").image
